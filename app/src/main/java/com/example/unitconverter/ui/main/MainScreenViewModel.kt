@@ -10,11 +10,13 @@ import kotlinx.coroutines.flow.update
 
 data class ConverterUiState(
     val category: Category = Category.LENGTH,
-    val inputValue: String = "",
+    val inputValue: String = "1",
     val fromUnit: String = Category.LENGTH.units.first(),
     val toUnit: String = Category.LENGTH.units[1],
-    val result: String = "",
-    val errorMessage: String? = null,
+    // Converted result as a formatted string (empty if input is invalid)
+    val resultFormatted: String = "",
+    // Raw converted double for quick reference grid
+    val resultRaw: Double? = null,
 )
 
 class ConverterViewModel : ViewModel() {
@@ -22,76 +24,89 @@ class ConverterViewModel : ViewModel() {
     private val _uiState = MutableStateFlow(ConverterUiState())
     val uiState: StateFlow<ConverterUiState> = _uiState.asStateFlow()
 
+    init {
+        // Compute initial result for default state
+        recalculate()
+    }
+
     fun onCategoryChange(newCategory: Category) {
         _uiState.update {
             it.copy(
-                category = newCategory,
-                fromUnit = newCategory.units.first(),
-                toUnit = newCategory.units.getOrElse(1) { newCategory.units.first() },
-                result = "",
-                errorMessage = null,
-                inputValue = "",
+                category  = newCategory,
+                fromUnit  = newCategory.units.first(),
+                toUnit    = newCategory.units.getOrElse(1) { newCategory.units.first() },
+                inputValue = "1",
             )
         }
+        recalculate()
     }
 
     fun onInputChange(input: String) {
-        _uiState.update { it.copy(inputValue = input, errorMessage = null) }
+        _uiState.update { it.copy(inputValue = input) }
+        recalculate()
     }
 
     fun onFromUnitChange(unit: String) {
-        _uiState.update { it.copy(fromUnit = unit, result = "") }
+        _uiState.update { it.copy(fromUnit = unit) }
+        recalculate()
     }
 
     fun onToUnitChange(unit: String) {
-        _uiState.update { it.copy(toUnit = unit, result = "") }
+        _uiState.update { it.copy(toUnit = unit) }
+        recalculate()
     }
 
-    fun convert() {
+    fun swap() {
+        _uiState.update {
+            it.copy(
+                fromUnit = it.toUnit,
+                toUnit   = it.fromUnit,
+            )
+        }
+        recalculate()
+    }
+
+    /**
+     * Converts the current input value and updates the result.
+     * Called after any state change that affects conversion.
+     */
+    private fun recalculate() {
         val state = _uiState.value
         val raw = state.inputValue.trim()
-
-        // Validation
-        if (raw.isEmpty()) {
-            _uiState.update { it.copy(errorMessage = "Please enter a value to convert") }
-            return
-        }
         val value = raw.toDoubleOrNull()
-        if (value == null) {
-            _uiState.update { it.copy(errorMessage = "Please enter a valid number") }
+
+        if (value == null || raw.isEmpty()) {
+            _uiState.update { it.copy(resultFormatted = "", resultRaw = null) }
             return
         }
 
         val converted = try {
             ConversionLogic.convert(state.category, value, state.fromUnit, state.toUnit)
-        } catch (e: Exception) {
-            _uiState.update { it.copy(errorMessage = "Conversion error: ${e.message}") }
+        } catch (_: Exception) {
+            _uiState.update { it.copy(resultFormatted = "", resultRaw = null) }
             return
         }
 
-        val formatted = formatResult(value, state.fromUnit, converted, state.toUnit)
-        _uiState.update { it.copy(result = formatted, errorMessage = null) }
+        _uiState.update {
+            it.copy(
+                resultFormatted = ConversionLogic.formatNumber(converted),
+                resultRaw       = converted,
+            )
+        }
     }
 
-    fun clearError() {
-        _uiState.update { it.copy(errorMessage = null) }
-    }
-
-    private fun formatResult(
-        inputVal: Double, fromUnit: String,
-        outputVal: Double, toUnit: String,
-    ): String {
-        val formattedInput = formatNumber(inputVal)
-        val formattedOutput = formatNumber(outputVal)
-        return "$formattedInput $fromUnit = $formattedOutput $toUnit"
-    }
-
-    private fun formatNumber(value: Double): String {
-        return if (value == value.toLong().toDouble() && !value.isInfinite()) {
-            value.toLong().toString()
-        } else {
-            // Up to 8 significant figures, trim trailing zeros
-            "%.8g".format(value).trimEnd('0').trimEnd('.')
+    /**
+     * Convert [value] from [fromUnit] to [targetUnit] in current category.
+     * Used for quick reference grid items.
+     */
+    fun convertTo(targetUnit: String): String {
+        val state = _uiState.value
+        val value = state.inputValue.trim().toDoubleOrNull() ?: return ""
+        return try {
+            val result = ConversionLogic.convert(state.category, value, state.fromUnit, targetUnit)
+            ConversionLogic.formatNumber(result)
+        } catch (_: Exception) {
+            ""
         }
     }
 }
